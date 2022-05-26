@@ -1,0 +1,433 @@
+---
+title: "PRACT_FLIGHTS_DEF"
+output: word_document
+date: '2022-05-21'
+---
+
+## DATASET OF FLIGHTS OF USA
+
+Carreguem les llibreries:
+
+
+```{r libraries}
+
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+library(plotly)
+library(reshape2)
+library(ggplot2)
+library(gganimate)
+library(gridExtra)
+library(plotrix)
+library("FactoMineR")
+library("factoextra")
+```
+
+Carreguem els fitxers csv respectius:
+
+```{r csv}
+
+flights <- read.csv("flights.csv", header=TRUE)
+airlines <- read.csv("airlines.csv", header=TRUE)
+airports <- read.csv("airports.csv", header=TRUE)
+
+```
+
+Donem un cop d'ull als tipus de dades:
+
+De la sortida del str(flights), podem veure que el dataset flights conté té 5.8 milions d'observacions i 31 variables sobre informació de cada vol. Per exemple, ens dóna info. sobre l'origen i la destinació, els possibles retards i altres característiques.
+
+Hem fet un summary del dataset flights per així poder verificar la qualitat de les dades. Com podem observar trobem valors Nan's.
+
+Com tenim moltes observacions en el csv flights, hem decidit intentar eliminar columnes redundants o no importants a partir d'una anàlisi exploratòria de les dades. També, hem proposat no realitzar una neteja de tots els valors Nan's, sinó fer-la quan sigui imprescindible. D'aquesta manera, no ens carreguem una gran quantitat de registres de vols. 
+
+
+```{r str}
+
+str(flights)
+str(airports)
+str(airlines)
+
+```
+
+A continuació, elaborarem una PCA de les variables del nostre dataset. La PCA ens permet visualitzar les components principals:
+
+```{r PCA} 
+
+flights_pca <- flights %>% select(ARRIVAL_DELAY, DEPARTURE_DELAY, DEPARTURE_TIME, ARRIVAL_TIME, ELAPSED_TIME, SCHEDULED_TIME, SCHEDULED_DEPARTURE, SCHEDULED_ARRIVAL, AIR_TIME, DISTANCE, AIRLINE_DELAY, LATE_AIRCRAFT_DELAY, AIRLINE) %>% filter(AIRLINE %in% c("AA","DL","WN")) %>% drop_na()
+
+flights_pca.def <- flights_pca %>% select(-AIRLINE)
+
+pca <- PCA(flights_pca.def, scale.unit = TRUE, graph = FALSE)
+
+get_eigenvalue(pca)
+
+fviz_eig(pca, addlabels = TRUE, ylim = c(0, 50))
+
+fviz_pca_var(pca, col.var = "contrib", gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"), repel=TRUE)
+
+var <- get_pca_var(pca)
+
+# Contributions of variables to PC2
+fviz_contrib(pca, choice = "var", axes = 1, top = 10)
+
+library("corrplot")
+corrplot(var$contrib, is.corr=FALSE)  
+corrplot(var$cos2, is.corr=FALSE)  
+
+
+
+```
+
+Anàlisi exploratòria de les dades: 
+
+```{r exp1}
+
+### STATUS: On Time, Slightly delayed, Highly delayed, Diverted, Cancelled
+
+flights_status <- flights %>% mutate(STATUS = case_when(ARRIVAL_DELAY < 15 ~ "On time", ARRIVAL_DELAY >= 15 ~ "Slightly delayed", ARRIVAL_DELAY >= 60 ~ "Highly delayed"))
+
+flights_status <- flights_status %>% mutate(STATUS = ifelse(ARRIVAL_DELAY >= 60, "Highly delayed", STATUS)) %>% mutate(STATUS = ifelse(DIVERTED  == 1, "Diverted", STATUS)) %>% mutate(STATUS = ifelse(CANCELLED  == 1, "Cancelled", STATUS))
+
+count_flights <- flights_status %>% group_by(STATUS) %>% summarise(count = 100*n()/5819079)
+count_flights
+
+ggplot(count_flights, aes(x=fct_reorder(STATUS,count), y=count, fill=STATUS)) + geom_col() + coord_flip() + theme(legend.position="none") + labs(x = 'Status', y = 'Percentage of number of flights', title = 'Percentage of number of flights depending on status', subtitle = 'Bar chart of number of flights', caption = 'Fig 2. Bar chart of the number of different status') + theme(axis.text.x = element_text(angle = 25, vjust = 0.75), plot.caption = element_text(vjust = 1)) 
+
+
+pie_labels <- paste0(count_flights$STATUS, " - ", round(100 * count_flights$count/sum(count_flights$count), 2), "%")
+pie(count_flights$count, labels = pie_labels) 
+
+pie3D(count_flights$count, theta=1.5, col = hcl.colors(length(pie_labels), "Spectral"),
+      labels = pie_labels,
+      labelcol = "black",
+      labelcex = 0.5, shade=0.5)
+```
+```{r exp2}
+
+flights_delay_mean <- flights %>% drop_na(ARRIVAL_DELAY) %>% group_by(MONTH) %>% summarize(MEAN_DELAY = mean(ARRIVAL_DELAY))
+
+ggp1 <- ggplot(flights_delay_mean, aes(x=MONTH, y=MEAN_DELAY)) + geom_line(color="blue") + labs(x = 'Months', y = 'Average delay', title = 'Average arrival delay monthly', caption = 'Fig 4. Linear graphic with the average delay by month') +scale_x_continuous(breaks = c(1,2,3,4,5,6,7,8,9,10,11,12))
+
+ggp1
+ggplotly(ggp1)          
+
+
+flights_arrival_delay <- flights %>% select(ARRIVAL_DELAY) %>% drop_na()
+
+ggplot(flights_arrival_delay, aes(x = ARRIVAL_DELAY)) + geom_histogram(bins=30, aes(y=..density..)) + geom_density(alpha = 0.1, fill = "blue") + labs(x = 'Average arrival delay', y = 'count', title = 'Histogram of average delay', caption = 'Fig 5. Histogram of the arrival delay') 
+
+### Matriu de correlacions
+
+str(flights)
+
+flights_corr <- flights %>% select(-CANCELLED, -DIVERTED, -YEAR, -AIRLINE, -TAIL_NUMBER, -CANCELLATION_REASON, -ORIGIN_AIRPORT, -DESTINATION_AIRPORT) %>% drop_na()
+
+# Load reshape2 package
+library(reshape2)
+ 
+# creating correlation matrix
+corr_mat <- round(cor(flights_corr),2)
+ 
+# reduce the size of correlation matrix
+melted_corr_mat <- melt(corr_mat)
+
+#plotting the correlation heatmap
+library(ggplot2)
+grafica_corr <- ggplot(data = melted_corr_mat, aes(x=Var1, y=Var2, fill=value)) +
+geom_tile() + theme(axis.text.x = element_text(angle = 80, vjust = 0.5)) + geom_text(aes(Var2, Var1, label=value), color= "black", size = 2.5) + labs(x = ' ', y = ' ', title = 'Correlation Heatmap of variables of our dataset', caption = 'Fig 1. Correlation Heatmap of flights')
+grafica_corr
+
+ggplotly(grafica_corr)
+
+```
+
+Data massage - eliminació de columnes redundants o que no usarem: 
+Merge dels documents - per quan ho necessitem
+```{r DataMassage}
+
+convert_to_POSIXct <- function(time){
+    x <- as.POSIXct(paste0(strrep('0', 4 - nchar(time)), as.character(time)), format='%H%M')
+    result <- format(x, format = "%H")
+    
+    return(result)
+}
+
+
+flights <- flights %>% mutate(DATE_DEPARTURE = paste(YEAR,MONTH,DAY,sep="-"), DELAYED = case_when(DEPARTURE_DELAY >= 15 ~ 1, TRUE ~ 0))
+
+### Passem aquesta variable a format Date
+flights$DATE_DEPARTURE <- as.Date(flights$DATE_DEPARTURE, format= "%Y-%m-%d")
+
+flights$NEW_SCHEDULED_DEPARTURE <- convert_to_POSIXct(flights$SCHEDULED_DEPARTURE)
+
+flights <- flights %>% mutate(HOUR = case_when(NEW_SCHEDULED_DEPARTURE == '01' ~ 1, NEW_SCHEDULED_DEPARTURE == '02' ~ 2, NEW_SCHEDULED_DEPARTURE == '03' ~ 3, NEW_SCHEDULED_DEPARTURE == '04' ~ 4, NEW_SCHEDULED_DEPARTURE == '05' ~ 5, NEW_SCHEDULED_DEPARTURE == '06' ~ 6, NEW_SCHEDULED_DEPARTURE == '07' ~ 7, NEW_SCHEDULED_DEPARTURE == '08' ~ 8, NEW_SCHEDULED_DEPARTURE == '09' ~ 9, NEW_SCHEDULED_DEPARTURE == '10' ~ 10, NEW_SCHEDULED_DEPARTURE == '11' ~ 11, NEW_SCHEDULED_DEPARTURE == '12' ~ 12, NEW_SCHEDULED_DEPARTURE == '13' ~ 13, NEW_SCHEDULED_DEPARTURE == '14' ~ 14, NEW_SCHEDULED_DEPARTURE == '15' ~ 15, NEW_SCHEDULED_DEPARTURE == '16' ~ 16, NEW_SCHEDULED_DEPARTURE == '17' ~ 17, NEW_SCHEDULED_DEPARTURE == '18' ~ 18, NEW_SCHEDULED_DEPARTURE == '19' ~ 19, NEW_SCHEDULED_DEPARTURE == '20' ~ 20, NEW_SCHEDULED_DEPARTURE == '21' ~ 21, NEW_SCHEDULED_DEPARTURE == '22' ~ 22, NEW_SCHEDULED_DEPARTURE == '23' ~ 23, NEW_SCHEDULED_DEPARTURE == '00' ~ 0))
+
+### Fem un merge dels fitxers que tenim disponibles (airlines, airports, flights)
+#x <- flights %>% merge(airports, by.x = 'ORIGIN_AIRPORT', by.y = 'IATA_CODE')
+
+#x <- rename(x, c('ORIGIN_AIRPORT_NAME'='AIRPORT', 'ORIGIN_CITY'='CITY', 'ORIGIN_STATE'='STATE', 'ORIGIN_COUNTRY'='COUNTRY','ORIGIN_LATITUDE'='LATITUDE','ORIGIN_LONGITUDE'='LONGITUDE'))
+
+#x <- x %>% merge(airports, by.x = 'DESTINATION_AIRPORT', by.y = 'IATA_CODE')
+
+#x <- rename(x, c('DESTINATION_AIRPORT_NAME'='AIRPORT', 'DESTINATION_CITY'='CITY', 'DESTINATION_STATE'='STATE', 'DESTINATION_COUNTRY'='COUNTRY','DESTINATION_LATITUDE'='LATITUDE','DESTINATION_LONGITUDE'='LONGITUDE'))
+
+#new_flights <- x %>% merge(airlines, by.x = 'AIRLINE', by.y = 'IATA_CODE')
+
+#### eliminar la selecció de variables que no són útils i que no usarem
+#new_flights <- new_flights %>% select(-WHEELS_ON, -WHEELS_OFF, -TAIL_NUMBER, -AIR_TIME, -ELAPSED_TIME)
+
+
+
+```
+
+HIPÒTESIS 
+
+```{r hip1}
+
+
+flights %>% group_by(AIRLINE) %>% summarize(NUM_FLIGHTS = n()) %>% arrange(desc(NUM_FLIGHTS))
+
+flights_with_count <- flights %>% filter(AIRLINE %in% c("WN", "AA", "DL", "EV", "OO")) %>% group_by(AIRLINE,DATE_DEPARTURE) %>% mutate(NUM_FLIGHTS=n()) %>% select(DATE_DEPARTURE, AIRLINE, NUM_FLIGHTS) %>% distinct()
+
+xmin <- c(as.Date("2015-01-01"), as.Date("2015-03-01"), as.Date("2015-06-01"), as.Date("2015-09-01"), as.Date("2015-12-01"))
+xmax <- c(as.Date("2015-02-28"), as.Date("2015-05-31"), as.Date("2015-08-31"), as.Date("2015-11-30"), as.Date("2015-12-31"))
+ymin <- c(0, 0, 0, 0, 0)
+ymax <- c(Inf, Inf, Inf, Inf, Inf)
+name <- c("Winter", "Spring", "Summer", "Autumn", "Winter")
+
+df <- data.frame(xmin, xmax, ymin, ymax, name)
+
+grafic <- ggplot(flights_with_count) + geom_line(aes(x = DATE_DEPARTURE, y = NUM_FLIGHTS, color=AIRLINE)) +  scale_x_date(date_breaks = '1 month', date_labels = '%b %d') + geom_rect(data = df, alpha = 0.12, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, fill = name)) + labs(x = 'Time', y = 'Number of daily flights', color = 'Airline', fill = 'Seasons', title = 'Temporal evolution of the number of flights in 2015', subtitle = 'Top 5 airlines in USA', caption = 'Fig 12. Temporal evolution of traffic of the busiest airlines in USA ') + theme(axis.text.x = element_text(angle = 25, vjust = 0.75), plot.caption = element_text(vjust = 1)) +   ylim(0, 4000) 
+
+ggplotly(grafic)
+
+```
+
+```{r hip2}
+
+xmas_def = flights %>% filter(DATE_DEPARTURE >= "2015-12-23" | between(DATE_DEPARTURE, as.Date("2015-01-01"), as.Date("2015-01-07"))) %>% group_by(AIRLINE) %>% count()
+
+ggplot(xmas_def, aes(x=reorder(AIRLINE,n), y=n, fill = factor(AIRLINE))) + geom_col() +coord_flip() + labs(x = 'Airline', y = 'Number of flights', color = 'Airlines', title = 'Number of flights in the Winter Holidays per airline', caption = 'Fig. 13. Number of flights in the Winter Holidays for several airlines') + theme(legend.position = "none")
+
+
+
+xmas_def = flights %>% filter(DATE_DEPARTURE >= "2015-12-23" | between(DATE_DEPARTURE, as.Date("2015-01-01"), as.Date("2015-01-07"))) %>% group_by(AIRLINE) %>% count() %>% rename(c('NumNadal'='n' ))
+ 
+def = flights %>% group_by(AIRLINE) %>% count()
+ 
+n_def = def %>% merge(xmas_def, by.x = 'AIRLINE', by.y = 'AIRLINE') %>% mutate(NUM_PERC=(NumNadal/n)*100)
+ 
+ggplot(n_def, aes(x=reorder(AIRLINE,NUM_PERC), y=NUM_PERC, fill = factor(AIRLINE))) + geom_col() +coord_flip() + labs(x = 'Airlines', y = 'Percentage of flights', color = 'Airlines', title = 'Percentage of flights in the Winter Holidays', caption = 'Fig. 14. Percentage of flights for each airline in the Winter Holidays with respect to total flights per airline') + theme(legend.position = "none") + scale_y_continuous(labels = function(y){paste0(y, '%')})
+
+
+```
+
+```{r hip3}
+
+most_freq_flights <- flights %>%  group_by(ORIGIN_AIRPORT) %>% count() %>% arrange(desc(n)) %>% head(20)
+
+most_freq_flights_norm <- flights %>%  group_by(ORIGIN_AIRPORT) %>% summarise(perc = n()*100/5819079) %>% arrange(desc(perc)) %>% head(20)
+
+Grafic <- ggplot(most_freq_flights, aes(fct_reorder(ORIGIN_AIRPORT,n), y=n, fill=ORIGIN_AIRPORT)) + geom_col() + labs(x = 'Airports', y = 'Number of flights', title = 'Number of flights in 2015', subtitle = 'Top 20 airports in USA', caption = 'Fig 15. Number of flights departing from the top 20 most frequented airports') + theme(axis.text.x = element_text(angle = 25, vjust = 0.75), plot.caption = element_text(vjust = 1)) +theme(legend.position="none")
+
+ggplotly(Grafic)
+
+Grafic2 <- ggplot(most_freq_flights_norm, aes(fct_reorder(ORIGIN_AIRPORT,perc), y=perc, fill=ORIGIN_AIRPORT)) + geom_col() + labs(x = 'Airports', y = 'Percentage of number of flights', title = 'Number of flights in 2015', subtitle = 'Top 20 airports in USA', caption = 'Fig 15. Percentage of number of flights departing from the top 20 most frequented airports') + theme(axis.text.x = element_text(angle = 25, vjust = 0.75), plot.caption = element_text(vjust = 1)) +theme(legend.position="none") + scale_y_continuous(labels = function(y){paste0(y, '%')})
+
+ggplotly(Grafic2)
+
+```
+
+```{r hip4}
+
+nou = flights %>% group_by(AIRLINE) %>% count()
+grafic <- ggplot(nou, aes(x=n, y=reorder(AIRLINE,n), fill = AIRLINE)) + geom_col() + labs(x = 'Number of flights', y = 'Airlines', title = 'Number of flights for each airline in 2015', subtitle = 'Top airlines in USA', caption = 'Fig 17. Number of flights of all airlines') +theme(legend.position="none")
+ggplotly(grafic)
+
+nou = flights %>% group_by(AIRLINE) %>% summarise(perc = 100*n()/5819079)
+grafic <- ggplot(nou, aes(x=perc, y=reorder(AIRLINE,perc), fill = AIRLINE)) + geom_col() + labs(x = 'Percentage of number of flights', y = 'Airlines', title = 'Percentage of number of flights for each airline in 2015', subtitle = 'Top airlines in USA', caption = 'Fig 18. Percentage of number of flights of all airlines') +theme(legend.position="none") + scale_x_continuous(labels = function(x){paste0(x, '%')})
+ggplotly(grafic) 
+
+
+```
+```{r hip5}
+new = flights%>%filter(AIRLINE=="AA") %>% mutate(Route = paste(ORIGIN_AIRPORT,"-",DESTINATION_AIRPORT)) %>% group_by(Route) %>% count() %>% arrange(desc(n)) %>% head(20)
+
+grafic <- ggplot(new, aes(x=reorder(Route,n), y=n, fill=factor(Route))) + geom_col() +coord_flip() + labs(x = 'Number of routes', y = 'Routes', title = 'Top airports routes in 2015', subtitle = 'Top routes in American Airlines Inc.', caption = 'Fig. 20. Top number of airports routes in American Airlines Inc.') +theme(legend.position="none")
+
+ggplotly(grafic)
+
+
+```
+``` {r hip6}
+### Hip 2. Pensem que hi haurà certes airlines que seran més propenses a tenir retards que altres
+delays = flights %>% select(AIRLINE, ends_with("DELAY"), -DEPARTURE_DELAY, -ARRIVAL_DELAY) 
+delays = delays %>% pivot_longer(cols=!AIRLINE, names_to = "DelayType") %>% filter(value>=15)
+delays
+
+ggplot(delays, aes(AIRLINE, fill=AIRLINE)) + geom_bar() + facet_grid(~DelayType) +coord_flip() + xlab("Airlines") + ylab("Frequency") + labs(title = "Frequency of each type of delay per airline", caption = "Fig. 22. Number of flights for every type of delay") +theme(legend.position="none")
+
+```
+```{r hip7}
+delay_flights <- flights %>% filter(HOUR %in% c(5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23)) %>% mutate(WEEK = case_when(DAY_OF_WEEK %in% c(1,2,3,4,5) ~ "BusinessDays", DAY_OF_WEEK %in% c(6,7) ~ "Weekend")) %>% group_by(WEEK, HOUR) %>% summarize(DELAYED_PERC = round(mean(DELAYED)*100, 4)) 
+
+ggplot(delay_flights)+ geom_line(aes(x = HOUR, y = DELAYED_PERC, color = WEEK), size = 0.5) + geom_point(aes(x = HOUR, y = DELAYED_PERC, color = WEEK), size = 0.8) + labs(x = 'Time', y = 'Percentage of delayed flights', color = 'Time of the week', title = 'Percentage of delayed flight by time of the week averaged across 2015', caption = 'Fig. 25. Delay of BusinessDays vs. Weekend') 
+
+```
+
+```{r hip8}
+options(dplyr.summarise.inform = FALSE)
+delay_flights <- flights %>% filter(AIRLINE %in% c("WN", "AA", "DL", "EV", "OO")) %>% filter(HOUR %in% c(5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23)) %>% group_by(AIRLINE, HOUR, DAY_OF_WEEK) %>% summarize(DELAYED_PERC = 100*round(mean(DELAYED), 4)) %>% mutate(NEW_DAY = case_when(DAY_OF_WEEK == 1 ~ "Monday", DAY_OF_WEEK == 2 ~ "Tuesday", DAY_OF_WEEK == 3 ~ "Wednesday", DAY_OF_WEEK == 4 ~ "Thursday", DAY_OF_WEEK == 5 ~ "Friday", DAY_OF_WEEK == 6 ~ "Saturday", DAY_OF_WEEK == 7 ~ "Sunday")) 
+
+delay_flights$DAY_ORDER <-  factor(delay_flights$NEW_DAY, levels=c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"))
+delay_flights
+
+ggplot(delay_flights)+ geom_line(aes(x = HOUR, y = DELAYED_PERC, color = AIRLINE), size = 0.5) + geom_point(aes(x = HOUR, y = DELAYED_PERC, color = AIRLINE), size = 0.8) +facet_grid(DAY_ORDER~.)+ scale_x_discrete(labels = function(x){case_when(x == 5 ~ '5am', x == 11 ~ '11am', x == 17 ~ '5pm', x == 22 ~ '10pm')}) + labs(x = 'Time', y = 'Percentage of delayed flights', color = 'Airline', title = 'Percentage of delayed flight by day of the week averaged across 2015', subtitle = 'Top US airlines', caption = 'Fig. 25. Delay by time of the week for top airlines')
+
+
+```
+```{r hip9}
+new_flights_delays <- flights %>% drop_na(AIR_SYSTEM_DELAY,SECURITY_DELAY,AIRLINE_DELAY,LATE_AIRCRAFT_DELAY, WEATHER_DELAY) 
+new_flights_delays
+
+delays_type <- new_flights_delays %>% select(AIR_SYSTEM_DELAY,SECURITY_DELAY,AIRLINE_DELAY,LATE_AIRCRAFT_DELAY, WEATHER_DELAY) %>% summarise(Air_system = mean(AIR_SYSTEM_DELAY), Security = mean(SECURITY_DELAY), Airline = mean(AIRLINE_DELAY), Late_aircraft = mean(LATE_AIRCRAFT_DELAY), Weather = mean(WEATHER_DELAY)) %>% gather(key="DELAY_TYPE", value="PERC", 1:5)
+
+delays_type
+
+grafic <- ggplot(delays_type, aes(x=fct_reorder(DELAY_TYPE,PERC), y=PERC, fill=DELAY_TYPE)) + geom_col(width=0.8) +coord_flip()+xlab("Type of delay") + ylab("Average of minuts delayed of 2015") + ggtitle("Average time of each delay type of flights in the US in 2015") + scale_fill_discrete("Delay type", labels=c("Air delay", "Airline", "Late aircraft",  "Security", "Weather")) + scale_x_discrete(labels = c("Security", "Weather", "Air delay", "Airline", "Late Aircraft"))+theme(legend.position="none")
+grafic
+ggplotly(grafic)
+
+new_flights_delays <- new_flights_delays %>% group_by(MONTH) %>% summarise(Air_system = mean(AIR_SYSTEM_DELAY), Security = mean(SECURITY_DELAY), Airline = mean(AIRLINE_DELAY), Late_aircraft = mean(LATE_AIRCRAFT_DELAY), Weather = mean(WEATHER_DELAY)) %>% gather(key="DELAY_TYPE", value="PERC", 2:6)
+
+new_flights_delays 
+
+grafic <- ggplot(new_flights_delays, aes(x=factor(MONTH), y=PERC, fill=DELAY_TYPE)) + geom_col(width=0.8) +xlab("Months") + ylab("Minutes of delay") +ggtitle("Monthly average time of each delay type of flights in the US in 2015")+ scale_x_discrete(labels = function(x){case_when(x == 1 ~ "January", x == 2 ~ "February", x == 3 ~ "March", x == 4 ~ "April", x == 5 ~ "May", x == 6 ~ "June", x == 7 ~ "July",  x == 8 ~ "August", x == 9 ~ "September",  x == 10 ~ "October", x == 11 ~ "November",  x == 12 ~ "December")})+ scale_fill_discrete("Delay type", labels=c("Air delay", "Airline", "Late aircraft",  "Security", "Weather")) + labs(caption = 'Fig. 27. Minutes of delay by type, monthly')
+
+ggplotly(grafic)
+
+
+```
+
+
+```{r Hip10}
+options(dplyr.summarise.inform = FALSE)
+delay_flights <- flights %>% filter(AIRLINE %in% c("WN", "AA", "DL", "EV", "OO")) %>% filter(HOUR %in% c(5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23)) %>% group_by(AIRLINE, HOUR) %>% summarize(DELAYED_PERC = round(mean(DELAYED), 4)) 
+delay_flights
+
+grafic <- ggplot(delay_flights) + geom_tile(aes(x = factor(HOUR), y = AIRLINE, fill = DELAYED_PERC), color = 'black') + scale_x_discrete(labels = c('5am', '6am', '7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm','3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm')) + scale_fill_distiller(palette = 'Spectral', labels = function(x) paste0(x*100, '%')) + labs(x = 'Hour of day', y = 'Airlines', fill = 'Delayed flights', title = 'Percentage of delayed flights by hour of the day', subtitle = 'Averaged across 2015 for top US airlines', caption = 'Fig. 31. Delay by hour of day for top airlines') + theme(panel.grid.major = element_blank(), axis.ticks = element_blank(), plot.caption = element_text(vjust = 7), axis.title.y = element_blank())
+
+grafic
+
+```
+
+```{r hip7}
+
+flights_def <- flights %>% group_by(DATE_DEPARTURE) %>% summarise(NUM_FLIGHTS = n(), PERC_DELAY = mean(DELAYED))
+
+flights_def
+
+grafic <- ggplot(flights_def) + geom_line(aes(x = DATE_DEPARTURE, y = NUM_FLIGHTS), color = 'green4') + geom_line(aes(x = DATE_DEPARTURE, y = PERC_DELAY * 20000), color = 'red') + scale_x_date(date_breaks = '1 month', date_labels = '%b %d') + scale_y_continuous(sec.axis = sec_axis(~ . / 20000, labels = function(y){paste0(y*100, '%')}, name = 'Percentage of delayed flights')) + labs(x = 'Time', y = 'Number of daily flights', caption = 'Fig. 23. Number of flights vs. % of delayed flights', title = 'Number of flights vs. percentage of delayed flights in 2015') + theme(axis.text.x = element_text(angle = 25, vjust = 0.75), plot.caption = element_text(vjust = 7), axis.title.y.left = element_text(color = 'green4'), axis.title.y.right = element_text(color = 'red'))
+grafic
+
+
+```
+
+```{r hip7}
+
+delay_flights <- flights %>% filter(HOUR %in% c(5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23)) %>% mutate(WEEK = case_when(DAY_OF_WEEK %in% c(1,2,3,4,5) ~ "BusinessDays", DAY_OF_WEEK %in% c(6,7) ~ "Weekend")) %>% group_by(WEEK, HOUR) %>% summarize(DELAYED_PERC = round(mean(DELAYED)*100, 4)) 
+
+ggplot(delay_flights)+ geom_line(aes(x = HOUR, y = DELAYED_PERC, color = WEEK), size = 0.5) + geom_point(aes(x = HOUR, y = DELAYED_PERC, color = WEEK), size = 0.8) + labs(x = 'Time', y = 'Percentage of delayed flights', color = 'Time of the week', title = 'Percentage of delayed flight by time of the week averaged across 2015', caption = 'Delay by time of the week') 
+
+
+```
+
+
+
+
+
+```{r hip7}
+
+flights_def <- flights %>% group_by(DATE_DEPARTURE) %>% summarise(PERC_CANCELLED = mean(CANCELLED), PERC_DIVERTED = mean(DIVERTED))
+
+flights_def
+
+ggplot(flights_def) + geom_line(aes(x = DATE_DEPARTURE, y = PERC_CANCELLED*100), color = 'blue4') + scale_x_date(date_breaks = '1 month', date_labels = '%b %d') + scale_y_continuous(labels = function(y){paste0(y, '%')}, name = 'Percentage of delayed flights') + labs(x = 'Time', y = 'Number of daily flights', caption = 'Source: publicly available data from DoT', title = 'Number of flights in the US in 2015') + theme(axis.text.x = element_text(angle = 25, vjust = 0.75), plot.caption = element_text(vjust = 7), axis.title.y.left = element_text(color = 'green4'), axis.title.y.right = element_text(color = 'red'))
+
+```
+Filtratge dut a terme per fer visualitzacions a Tableau: 
+
+``` {r FilterTableau}
+
+### Aerolínia més popular per cada estat
+
+x <- flights %>% merge(airports, by.x = 'ORIGIN_AIRPORT', by.y = 'IATA_CODE')
+
+x <- rename(x, c('ORIGIN_AIRPORT_NAME'='AIRPORT', 'ORIGIN_CITY'='CITY', 'ORIGIN_STATE'='STATE', 'ORIGIN_COUNTRY'='COUNTRY','ORIGIN_LATITUDE'='LATITUDE','ORIGIN_LONGITUDE'='LONGITUDE'))
+
+flights_airlines <- x %>% group_by(AIRLINE,ORIGIN_STATE,ORIGIN_LATITUDE,ORIGIN_LONGITUDE) %>% count()
+
+flights_top_airlines <- flights_airlines %>% group_by(ORIGIN_STATE) %>% top_n(1, n)
+
+write.csv(flights_top_airlines, "flights_top_airlines.csv", row.names = FALSE)
+
+```
+
+
+``` {r animation}
+flights_airports <- inner_join(flights, airlines, by = c("AIRLINE" = "IATA_CODE")) 
+
+flights_airports_tidy <- flights_airports%>% select(DELAYED, AIRLINE, MONTH) %>% group_by(AIRLINE, MONTH) %>% summarize(value = sum(DELAYED,na.rm=TRUE)) %>% mutate(NEW_MONTH = case_when(MONTH == 1 ~ "January", MONTH == 2 ~ "February", MONTH == 3 ~ "March", MONTH == 4 ~ "April", MONTH == 5 ~ "May", MONTH == 6 ~ "June", MONTH == 7 ~ "July",  MONTH == 8 ~ "August", MONTH == 9 ~ "September",  MONTH == 10 ~ "October", MONTH == 11 ~ "November",  MONTH == 12 ~ "December")) #%>% select(-MONTH)
+
+head(flights_airports_tidy)
+
+flights_ranking <- flights_airports_tidy %>% group_by(MONTH) %>% mutate(rank = rank(-value), Value_rel = value/value[rank==1], Value_lbl = paste0(" ", round(value))) %>% group_by(AIRLINE) %>% filter(rank<=10) %>% ungroup()
+
+
+anim <- ggplot(flights_ranking, aes(rank, group = AIRLINE, 
+                fill = as.factor(AIRLINE), color = as.factor(AIRLINE))) +
+  geom_tile(aes(y = value/2,
+                height = value,
+                width = 0.9), alpha = 0.8, color = NA) +
+  geom_text(aes(y = 0, label = paste(AIRLINE, " ")), vjust = 0.2, hjust = 1) +
+  geom_text(aes(y=value,label = Value_lbl, hjust=0)) +
+  coord_flip(clip = "off", expand = FALSE) +
+  scale_y_continuous(labels = scales::comma) +
+  scale_x_reverse() +
+  guides(color = "none", fill = "none") +
+  theme(axis.line=element_blank(),
+        axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        axis.title.x=element_blank(),
+         axis.title.y=element_blank(),
+        legend.position="none",
+        panel.background=element_blank(),
+        panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        panel.grid.major.x = element_line( size=.1, color="grey" ),
+        panel.grid.minor.x = element_line( size=.1, color="grey" ),
+        plot.title=element_text(size=25, hjust=0.5, face="bold", colour="grey", vjust=-1),
+        plot.subtitle=element_text(size=18, hjust=0.5, face="italic", color="grey"),
+        plot.caption =element_text(size=8, hjust=0.5, face="italic", color="grey"),
+        plot.background=element_blank(),
+        plot.margin = margin(2, 2, 2, 4, "cm")) +
+  transition_states(MONTH, transition_length = 4, state_length = 1, wrap = FALSE) + 
+  view_follow(fixed_x = TRUE) + 
+  labs(title = 'Number of delays per Month : {closest_state}',  
+       subtitle  =  "Top Airlines delayed in USA",
+       caption  = "Numbers of flights delayed monthly of Top 10 airlines in USA") 
+
+# 3.3.10a. Generar animació (igual que cridar >anim)
+animate(anim, 200, fps = 20,  width = 800, height = 600, 
+        renderer = av_renderer("gganim.avi"), end_pause = 15, start_pause =  15) 
+animate(anim, 200, fps = 13,  width = 1200, height = 1000, 
+        renderer = gifski_renderer("gganim.gif"))
+
+#animate(anim, 200, fps = 20,  width = 1200, height = 1000, renderer = ffmpeg_renderer()) -> for_mp4
+#anim_save("animation.mp4", animation = for_mp4 )
+
+```
